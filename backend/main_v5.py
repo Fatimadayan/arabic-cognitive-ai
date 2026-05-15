@@ -680,27 +680,61 @@ app = FastAPI(
     version="5.0.0",
 )
 
-app.add_middleware(CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
-)
+# ── CORS: catch ALL OPTIONS preflight before any middleware runs ──────────────
+from fastapi import Response as FResponse
+
+@app.options("/{rest_of_path:path}")
+async def options_handler(rest_of_path: str):
+    """Handle ALL CORS preflight requests — runs before auth middleware."""
+    return FResponse(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin":  "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*, X-API-Key, x-api-key, Content-Type, Authorization",
+            "Access-Control-Max-Age":       "86400",
+        }
+    )
 
 PUBLIC_PATHS = {"/api/health", "/docs", "/openapi.json", "/"}
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
+    # CORS headers on every response
+    if request.method == "OPTIONS":
+        from fastapi.responses import Response as FR
+        resp = FR()
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "*, X-API-Key, x-api-key, Content-Type, Authorization"
+        resp.headers["Access-Control-Max-Age"] = "86400"
+        return resp
+
+    # Allow public paths without auth
     if request.url.path in PUBLIC_PATHS:
-        return await call_next(request)
-    # Auth
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+
+    # Auth check
     key = (request.headers.get("X-API-Key")
            or request.headers.get("x-api-key"))
     if key != API_KEY:
-        return JSONResponse({"error": "Unauthorized"}, status_code=403)
+        resp = JSONResponse({"error": "Unauthorized"}, status_code=403)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
     # Rate limiting
     ip = request.client.host if request.client else "unknown"
     if not limiter.check(ip):
-        return JSONResponse({"error": "Rate limit — 40 req/min"}, status_code=429)
-    return await call_next(request)
+        r = JSONResponse({"error": "Rate limit — 40 req/min"}, status_code=429)
+        r.headers["Access-Control-Allow-Origin"] = "*"
+        return r
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    return response
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -876,3 +910,4 @@ async def on_startup():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    
