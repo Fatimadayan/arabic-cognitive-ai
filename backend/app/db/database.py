@@ -23,3 +23,11 @@ def get_db():
     yield db
   finally:
     db.close()
+
+
+def init_db():
+  """Create database tables if they don't exist."""
+  from app.db.base import Base
+  import app.db.models  # ensure all models are imported and registered
+
+  Base.metadata.create_all(bind=engine)

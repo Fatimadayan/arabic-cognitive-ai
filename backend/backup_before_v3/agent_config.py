@@ -1,25 +1,8 @@
-"""
-ACAI Agent Configuration.
-
-Each agent has:
-  - LABEL: Display name with emoji
-  - SYSTEM_PROMPT: Behavior instructions
-  - MODEL: Which Ollama model to use
-
-CHANGE FROM PREVIOUS VERSION:
-  - lughawi now uses ARABIC_MODEL (bahraini-pro) - this is the fine-tuned dialect specialist
-  - All other agents use PRIMARY_MODEL (qwen2.5:7b)
-  - muraqib (fact-checker) added to AGENT_MODELS (was missing - bug fix)
-"""
 from app.core.config import ARABIC_MODEL, PRIMARY_MODEL
 
 AGENT_LABELS = {
-    "bahith":  "🔭 باحث",
-    "musheer": "⚖️ مشير",
-    "lughawi": "ع لغوي",
-    "hakeem":  "🧠 حكيم",
-    "muraqib": "🔍 مراقب",
-    "bani":    "🕸️ بانِ",
+    "bahith":"🔭 باحث", "musheer":"⚖️ مشير", "lughawi":"ع لغوي",
+    "hakeem":"🧠 حكيم", "muraqib":"🔍 مراقب", "bani":"🕸️ بانِ",
 }
 
 SYSTEM_PROMPTS = {
@@ -38,7 +21,7 @@ SYSTEM_PROMPTS = {
 **المتطلبات:** خطوات أو شروط
 ⚠️ هذا تحليل استرشادي. راجع متخصصاً قانونياً.""",
 
-"lughawi": """أنت لغوي — خبير اللغة العربية وعلم اللهجات، متخصص في اللهجة البحرينية.
+"lughawi": """أنت لغوي — خبير اللغة العربية وعلم اللهجات.
 **🗺️ اللهجة:** [النوع] — الثقة: X%
 **المؤشرات:** الكلمات الدالة
 **🔍 الصرف:** كلمة → جذر → وزن → معنى (٣ كلمات)
@@ -66,24 +49,10 @@ SYSTEM_PROMPTS = {
 **المفاهيم:** م١، م٢، م٣""",
 }
 
-# Model assignment per agent.
-# CRITICAL: lughawi gets ARABIC_MODEL (bahraini-pro) - this is the fine-tuned specialist.
-# All others share PRIMARY_MODEL for consistency and to save GPU memory.
 AGENT_MODELS = {
-    "bahith":  PRIMARY_MODEL,
+    "bahith": PRIMARY_MODEL,
     "musheer": PRIMARY_MODEL,
-    "lughawi": ARABIC_MODEL,     # ← bahraini-pro, the fine-tuned model
-    "hakeem":  PRIMARY_MODEL,
-    "muraqib": PRIMARY_MODEL,    # ← was missing in original
-    "bani":    PRIMARY_MODEL,
-}
-
-# Agent metadata - used by verification module to know what to check
-AGENT_METADATA = {
-    "bahith":  {"requires_citations": True,  "min_words": 30, "expects_arabic": False},
-    "musheer": {"requires_citations": True,  "min_words": 40, "expects_arabic": False},
-    "lughawi": {"requires_citations": False, "min_words": 20, "expects_arabic": True},
-    "hakeem":  {"requires_citations": False, "min_words": 50, "expects_arabic": False},
-    "muraqib": {"requires_citations": False, "min_words": 15, "expects_arabic": False},
-    "bani":    {"requires_citations": False, "min_words": 15, "expects_arabic": False},
+    "lughawi": PRIMARY_MODEL,
+    "hakeem": PRIMARY_MODEL,
+    "bani": PRIMARY_MODEL,
 }

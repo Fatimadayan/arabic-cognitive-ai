@@ -1,13 +1,7 @@
-"""
-ACAI Orchestrator — Batch 1.
-Handles intent classification, pipeline assembly, and sequential agent execution.
-"""
 from app.core.orchestrator_config import *
+from app.services.agent import build_agent_prompt, build_ollama_messages, ollama_blocking, ollama_streaming
 from app.core.agent_config import AGENT_LABELS, AGENT_MODELS
 from app.core.config import PRIMARY_MODEL
-from app.services.agent import build_agent_prompt, build_ollama_messages
-from app.services.agent_executor import execute_agent
-from app.services.rag import rag
 
 
 async def orchestrate(
@@ -15,41 +9,63 @@ async def orchestrate(
         message_history: list[dict] | None = None,
         mode: str = "auto"
     ) -> dict:
-    """Full orchestration: intent → pipeline → execution → merge."""
+    """Full orchestration: memory → RAG → pipeline → merge → save."""
+    
+    # TODO RAG retrieval
+    # rag_context  = rag.get_rag_context(query, k=2)
+    # rag_used = bool(rag_context)
 
+    # Auto: Intent + pipeline
     if mode == "auto":
         intent = classify_intent(query)
         pipeline = build_pipeline(intent, mode)
-        outputs: dict[str, str] = {}
-        acc_context = ""
-        rag_ctx = rag.get_rag_context(query, k=2)
-
+        
+        outputs: dict[str, str] = {} # messages per agent id
+        
+        acc_context = "" # accumulated context
         for agent_id in pipeline:
-            agent_response = await execute_agent(
+            model = AGENT_MODELS.get(agent_id, PRIMARY_MODEL)
+            # build agent prompt (return system & built prompt as Ollama messages)
+            system, prompt = await build_agent_prompt(
                 agent_id=agent_id,
                 query=query,
-                prev_context=acc_context,
-                rag_ctx=rag_ctx,
-                message_history=message_history,
+                prev_context=acc_context
+                # rag_context = rag_context if not acc_context else "",
             )
+
+            # build the messages structure for ollama, then execute agent
+            messages = build_ollama_messages(system=system, prompt=prompt, message_history=message_history)
+            agent_response = ollama_blocking(model=model, messages=messages)
+
+            # save agent response as context for next agent, and save the response
+            acc_context = agent_response
             outputs[agent_id] = agent_response
-            if agent_response and not agent_response.startswith("[خطأ"):
-                acc_context = agent_response
 
+        # merge agents outputs
         final_output = merge_pipeline_outputs(outputs)
+        
         return {
-            "output": final_output,
-            "pipeline": pipeline,
-            "intent": intent,
+            'output': final_output,
+            'pipeline': pipeline,
+            'intent': intent,
         }
-
-    agent_id = mode.split(":", 1)[1]
+        
+    # One agent, enables response streaming...
+    
+    agent_id = mode.split(":")[1]
     model = AGENT_MODELS.get(agent_id, PRIMARY_MODEL)
-    system, prompt = await build_agent_prompt(agent_id=agent_id, query=query)
+    
+    # build agent prompt (return system & prompt)
+    system, prompt = await build_agent_prompt(
+        agent_id=agent_id,
+        query=query,
+    )
+                
+    # build the messages structure for ollama, then return it for streaming
     messages = build_ollama_messages(system=system, prompt=prompt, message_history=message_history)
-
+    
     return {
-        "messages": messages,
+        'messages': messages,
     }
         
     # TODO sequential agent pipeline

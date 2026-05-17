@@ -9,8 +9,8 @@ router = APIRouter(prefix="/health", tags=["health"])
 async def health():
     try:
         async with httpx.AsyncClient(timeout=4) as c:
-            r = await c.get(f"{OLLAMA_URL}tags")
-            models = [m["name"] for m in r.json().get("models", [])]
+            pythonr = await c.get(f"{OLLAMA_URL.rstrip('/')}/api/tags")
+            models = [m["name"] for m in pythonr.json().get("models", [])]
             ollama_ok = True
     except:
         models, ollama_ok = [], False

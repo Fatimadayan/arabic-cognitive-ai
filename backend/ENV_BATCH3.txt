@@ -1,0 +1,9 @@
+WHISPER_MODEL=tiny
+TTS_BACKEND=edge
+EDGE_TTS_VOICE=ar-BH-LailaNeural
+VISION_MODEL=qwen2.5vl:7b
+OCR_LANG=ara+eng
+
+# Optional settings:
+# TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
+# OLLAMA_URL=http://localhost:11434/
