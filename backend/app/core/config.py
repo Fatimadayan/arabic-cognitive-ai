@@ -17,7 +17,26 @@ load_dotenv(ENV_FILE)
 
 # ─── Core settings ─────────────────────────────────────────────────────
 API_KEY        = os.getenv("API_KEY", "acai-dev-key-change-me")
-PRIMARY_MODEL  = os.getenv("PRIMARY_MODEL", "qwen2.5:7b-instruct-q4_K_M")
+MODEL_TIER = os.getenv("MODEL_TIER", "LITE").upper()
+
+TIER_MODELS = {
+    "FULL": {
+        "primary": "qwen2.5:7b-instruct-q4_K_M",
+        "fast": "qwen2.5:7b-instruct-q4_K_M",
+    },
+    "LITE": {
+        "primary": "qwen2.5:3b",
+        "fast": "qwen2.5:3b",
+    },
+    "MOBILE": {
+        "primary": "qwen2.5:1.5b",
+        "fast": "qwen2.5:1.5b",
+    },
+}
+
+_tier = TIER_MODELS.get(MODEL_TIER, TIER_MODELS["LITE"])
+PRIMARY_MODEL  = _tier["primary"]
+FAST_MODEL     = _tier["fast"]
 ARABIC_MODEL   = os.getenv("ARABIC_MODEL", "bahraini-pro:latest")
 VISION_MODEL   = os.getenv("VISION_MODEL", "llava:7b")  # for vision (Batch 3)
 

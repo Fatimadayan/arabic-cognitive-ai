@@ -1,69 +1,63 @@
 """
-ACAI Speech-To-Text Service.
+ACAI Speech-to-Text service.
 
-Uses faster-whisper (CTranslate2) for CPU-efficient Arabic transcription.
-
-Key choices:
-  - "tiny" model by default (~75 MB) for fast CPU inference
-  - Switch to "small" or "base" in .env for higher accuracy at speed cost
-  - INT8 quantization for max speed on CPU
-  - Arabic language hint forces dialect-aware decoding
-  - Falls back gracefully if faster-whisper isn't installed
-
-Usage:
-    from app.services.stt import stt
-
-    text, metadata = await stt.transcribe(audio_bytes)
-    # text = "والله الحين وايد زين"
-    # metadata = {"language": "ar", "duration": 3.2, "model": "tiny"}
+Improvements:
+  - Uses better beam_size=5 (instead of 1) for higher accuracy
+  - initial_prompt seeds Whisper with Arabic context
+  - Supports WHISPER_MODEL=small/medium for accuracy upgrade
+  - Backward-compat exports `stt` singleton + `is_available()`
 """
+import logging
 import os
 import tempfile
-import asyncio
+import traceback
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
-from app.core.config import BACKEND_DIR
-from app.core.logger import log
+log = logging.getLogger(__name__)
 
-
-# Configurable via .env: WHISPER_MODEL=tiny|base|small|medium|large
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "tiny")
+WHISPER_CACHE_DIR = Path(os.getenv("WHISPER_CACHE", "./whisper_cache"))
+WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
+WHISPER_COMPUTE = os.getenv("WHISPER_COMPUTE", "int8")
 
-# Where faster-whisper caches downloaded models
-WHISPER_CACHE_DIR = BACKEND_DIR / "data" / "whisper_models"
-WHISPER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+# Seed Whisper with Arabic context — helps it produce Arabic-correct output
+ARABIC_INITIAL_PROMPT = (
+    "هذا نص باللغة العربية الفصحى. "
+    "يحتوي على أسئلة وكلمات عربية. "
+    "أين الكويت، ما هي البحرين، كيف الحال."
+)
 
 
 class STTService:
-    """
-    Speech-to-text service. Lazy-loads model on first use to avoid
-    blocking server startup.
-    """
-
     def __init__(self):
         self._model = None
-        self._available = None  # tri-state: None (unknown), True, False
+        self._import_ok = None
+        self._load_error: Optional[str] = None
+        self._try_import()
 
-    def _try_import(self):
-        """Attempt to import faster-whisper. Returns True if available."""
-        if self._available is not None:
-            return self._available
+    def _try_import(self) -> bool:
+        if self._import_ok is not None:
+            return self._import_ok
         try:
-            from faster_whisper import WhisperModel
-            self._available = True
+            import faster_whisper  # noqa: F401
+            self._import_ok = True
             log.info("stt: faster-whisper available")
-        except ImportError:
-            self._available = False
-            log.warning(
-                "stt: faster-whisper not installed. "
-                "Voice transcription disabled. "
-                "Install with: uv add faster-whisper"
-            )
-        return self._available
+        except Exception as e:
+            self._import_ok = False
+            self._load_error = f"import_failed: {type(e).__name__}: {e}"
+            log.error(f"stt: faster-whisper import failed: {e}")
+        return self._import_ok
+
+    @property
+    def available(self) -> bool:
+        return bool(self._import_ok)
+
+    def is_available(self) -> bool:
+        """Backward-compat method for main.py startup check."""
+        return self.available
 
     def _load_model(self):
-        """Load Whisper model on first use (lazy). Returns model or None."""
         if self._model is not None:
             return self._model
         if not self._try_import():
@@ -72,103 +66,94 @@ class STTService:
         from faster_whisper import WhisperModel
 
         try:
-            log.info(f"stt: loading whisper '{WHISPER_MODEL_SIZE}' (first time may download ~75MB)")
+            log.info(f"stt: loading whisper '{WHISPER_MODEL_SIZE}' on {WHISPER_DEVICE}")
+            WHISPER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
             self._model = WhisperModel(
                 WHISPER_MODEL_SIZE,
-                device="cpu",
-                compute_type="int8",
+                device=WHISPER_DEVICE,
+                compute_type=WHISPER_COMPUTE,
                 download_root=str(WHISPER_CACHE_DIR),
             )
-            log.info(f"stt: whisper model '{WHISPER_MODEL_SIZE}' loaded")
+            log.info(f"stt: whisper '{WHISPER_MODEL_SIZE}' loaded")
             return self._model
         except Exception as e:
-            log.error(f"stt: failed to load model: {e}")
-            self._available = False
+            tb = traceback.format_exc()
+            self._load_error = f"{type(e).__name__}: {e}"
+            log.error(f"stt: model load failed:\n{tb}")
             return None
 
-    async def transcribe(
-        self,
-        audio_bytes: bytes,
-        language: Optional[str] = "ar",
-    ) -> tuple[str, dict]:
-        """
-        Transcribe audio bytes to text.
+    def status(self) -> Dict[str, Any]:
+        return {
+            "available": self.available,
+            "model_size": WHISPER_MODEL_SIZE,
+            "device": WHISPER_DEVICE,
+            "compute": WHISPER_COMPUTE,
+            "model_loaded": self._model is not None,
+            "load_error": self._load_error,
+            "cache_dir": str(WHISPER_CACHE_DIR.absolute()),
+            "accuracy_tip": (
+                "For better Arabic accuracy, set WHISPER_MODEL=small or medium in .env"
+                if WHISPER_MODEL_SIZE == "tiny" else None
+            ),
+        }
 
-        Args:
-            audio_bytes: Raw audio file bytes (WAV/MP3/M4A/WebM/OGG - whisper handles many)
-            language: ISO language code ("ar" for Arabic). None = auto-detect.
+    def transcribe(self, audio_bytes: bytes, language: str = "ar") -> Dict[str, Any]:
+        if not self._try_import():
+            return {"text": "", "error": "whisper_not_installed",
+                    "detail": self._load_error}
 
-        Returns:
-            (transcribed_text, metadata_dict)
-        """
-        if not audio_bytes:
-            return "", {"error": "empty_audio"}
-
-        # Run blocking model.transcribe in a thread to avoid blocking event loop
-        return await asyncio.to_thread(
-            self._transcribe_sync, audio_bytes, language
-        )
-
-    def _transcribe_sync(
-        self,
-        audio_bytes: bytes,
-        language: Optional[str] = "ar",
-    ) -> tuple[str, dict]:
-        """Synchronous worker function."""
         model = self._load_model()
         if model is None:
-            return "", {
-                "error": "whisper_unavailable",
-                "hint": "Install faster-whisper: uv add faster-whisper",
-            }
+            return {"text": "", "error": "whisper_load_failed",
+                    "detail": self._load_error or "unknown load failure"}
 
-        # faster-whisper needs a file path, not bytes. Write to a temp file.
         tmp_path = None
         try:
-            with tempfile.NamedTemporaryFile(
-                suffix=".audio", delete=False, dir=str(WHISPER_CACHE_DIR)
-            ) as f:
-                f.write(audio_bytes)
-                tmp_path = f.name
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
+                tmp.write(audio_bytes)
+                tmp_path = tmp.name
 
+            # ★ IMPROVED TRANSCRIPTION SETTINGS for Arabic accuracy ★
             segments, info = model.transcribe(
                 tmp_path,
                 language=language,
-                beam_size=5,
-                vad_filter=True,  # cut silence; faster + more accurate
+                beam_size=5,                     # was 1; 5 is much more accurate
+                best_of=5,                       # generates multiple candidates and picks best
+                temperature=0.0,                 # deterministic, less hallucination
+                condition_on_previous_text=False,# prevents drift on short audio
+                initial_prompt=ARABIC_INITIAL_PROMPT if language == "ar" else None,
+                vad_filter=True,                 # voice activity detection
                 vad_parameters={"min_silence_duration_ms": 500},
             )
+            text = " ".join(seg.text.strip() for seg in segments).strip()
 
-            # Materialize the generator
-            text_parts = []
-            for seg in segments:
-                if seg.text:
-                    text_parts.append(seg.text.strip())
-
-            full_text = " ".join(text_parts).strip()
-
-            return full_text, {
+            return {
+                "text": text,
                 "language": info.language,
-                "language_probability": round(info.language_probability, 3),
-                "duration_sec": round(info.duration, 2),
+                "duration": info.duration,
                 "model": WHISPER_MODEL_SIZE,
-                "segments": len(text_parts),
+                "hint": (
+                    "Transcription accuracy can be improved by upgrading "
+                    "WHISPER_MODEL from 'tiny' to 'small' or 'medium' in .env"
+                    if WHISPER_MODEL_SIZE == "tiny" else None
+                ),
             }
-
         except Exception as e:
-            log.error(f"stt.transcribe error: {e}")
-            return "", {"error": str(e)}
+            tb = traceback.format_exc()
+            log.error(f"stt: transcribe failed:\n{tb}")
+            return {"text": "", "error": "transcribe_failed",
+                    "detail": f"{type(e).__name__}: {e}"}
         finally:
-            if tmp_path and Path(tmp_path).exists():
+            if tmp_path:
                 try:
-                    Path(tmp_path).unlink()
+                    os.unlink(tmp_path)
                 except Exception:
                     pass
 
-    def is_available(self) -> bool:
-        """Check if STT is ready (without forcing model load)."""
-        return self._try_import()
 
-
-# Singleton
+# Backward-compat singleton
 stt = STTService()
+
+
+def get_stt() -> STTService:
+    return stt

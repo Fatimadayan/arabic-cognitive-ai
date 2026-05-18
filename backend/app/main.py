@@ -45,8 +45,8 @@ async def lifespan(app: FastAPI):
         from app.services.tts import tts
         from app.services.vision import vision
         log.info(f"🎤 STT available: {stt.is_available()}")
-        log.info(f"🔊 TTS status: {tts.get_status()}")
-        log.info(f"👁️  Vision status: {vision.get_status()}")
+        log.info(f"🔊 TTS status: {tts.status()}")
+        log.info(f"👁️  Vision status: {vision.status()}")
     except Exception as e:
         log.warning(f"Multimodal status check failed: {e}")
 

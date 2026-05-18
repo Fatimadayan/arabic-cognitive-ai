@@ -1,10 +1,11 @@
 export const AGENTS = [
   {
-    id:"bahith", ar:"باحث", en:"Researcher",
-    title:"البحث في الويب بالذكاء الاصطناعي", badge:"WEB SEARCH",
-    icon:"◉", hex:"#06b6d4", glow:"#06b6d428",
-    hint:"اسأل عن أي موضوع..  سأبحث في شبكة الإنترنت",
-    tips:[
+    id: "bahith", ar: "باحث", en: "Researcher",
+    title: "البحث في الويب بالذكاء الاصطناعي", badge: "WEB SEARCH",
+    icon: "◉", img: "/agents/bahith.png",
+    hex: "#3b82f6", glow: "#3b82f628",
+    hint: "اسأل عن أي موضوع..  سأبحث في شبكة الإنترنت",
+    tips: [
       "ما أحدث تطورات الذكاء الاصطناعي في الخليج؟",
       "What are Bahrain CBB regulations for fintech 2025?",
       "مقارنة بين GPT-4o و Qwen2.5 للغة العربية",
@@ -12,11 +13,12 @@ export const AGENTS = [
     mode: "single:bahith",
   },
   {
-    id:"hakeem", ar:"حكيم", en:"Reasoner",
-    title:"التفكير العميق والاستدلال", badge:"DEEP THINK",
-    icon:"◈", hex:"#7c3aed", glow:"#7c3aed28",
-    hint:"اطرح مشكلة معقدة..  سأفكر خطوة بخطوة",
-    tips:[
+    id: "hakeem", ar: "حكيم", en: "Reasoner",
+    title: "التفكير العميق والاستدلال", badge: "DEEP THINK",
+    icon: "◈", img: "/agents/hakeem.png",
+    hex: "#a855f7", glow: "#a855f728",
+    hint: "اطرح مشكلة معقدة..  سأفكر خطوة بخطوة",
+    tips: [
       "لماذا يُعدّ الذكاء الاصطناعي العام تهديداً وجودياً؟",
       "Analyze the AI alignment problem from first principles",
       "هل يمكن للأخلاق أن تكون نسبية تماماً؟",
@@ -24,11 +26,12 @@ export const AGENTS = [
     mode: "single:hakeem",
   },
   {
-    id:"musheer", ar:"مشير", en:"GCC Advisor",
-    title:"مستشار أنظمة الخليج والمصارف", badge:"GCC LAW",
-    icon:"◆", hex:"#d97706", glow:"#d9770628",
-    hint:"اسأل عن أنظمة CBB ،SAMA، رؤية 2030 ..",
-    tips:[
+    id: "musheer", ar: "مشير", en: "GCC Advisor",
+    title: "مستشار أنظمة الخليج والمصارف", badge: "GCC LAW",
+    icon: "◆", img: "/agents/musheer.png",
+    hex: "#0d9488", glow: "#0d948828",
+    hint: "اسأل عن أنظمة CBB ،SAMA، رؤية 2030 ..",
+    tips: [
       "ما متطلبات ترخيص البنك في البحرين؟",
       "ما الفرق بين تنظيم CBB و SAMA للذكاء الاصطناعي؟",
       "ما أهداف رؤية البحرين 2030 الاقتصادية؟",
@@ -36,11 +39,12 @@ export const AGENTS = [
     mode: "single:musheer",
   },
   {
-    id:"lughawi", ar:"لغوي", en:"Arabic Expert",
-    title:"اللغة العربية واللهجات", badge:"ARABIC NLP",
-    icon:"ع", hex:"#059669", glow:"#05966928",
-    hint:"أدخل أي نص عربي..  سأحلل اللهجة والصرف",
-    tips:[
+    id: "lughawi", ar: "لغوي", en: "Arabic Expert",
+    title: "اللغة العربية واللهجات", badge: "ARABIC NLP",
+    icon: "ع", img: "/agents/lughawi.png",
+    hex: "#f97316", glow: "#f9731628",
+    hint: "أدخل أي نص عربي..  سأحلل اللهجة والصرف",
+    tips: [
       "والله يا شباب الحين وايد زين هالمشروع حيل",
       "هذا النظام combines AI مع اللغة العربية الحديثة",
       "إيه رأيك في الذكاء الاصطناعي؟ أنا عايز أعرف",
@@ -48,11 +52,12 @@ export const AGENTS = [
     mode: "single:lughawi",
   },
   {
-    id:"muraqib", ar:"مراقب", en:"Fact Checker",
-    title:"التحقق من صحة المعلومات", badge:"VERIFY",
-    icon:"◎", hex:"#dc2626", glow:"#dc262628",
-    hint:"أرسل معلومة..  سأتحقق من صحتها",
-    tips:[
+    id: "muraqib", ar: "مراقب", en: "Fact Checker",
+    title: "التحقق من صحة المعلومات", badge: "VERIFY",
+    icon: "◎", img: "/agents/muraqib.png",
+    hex: "#14b8a6", glow: "#14b8a628",
+    hint: "أرسل معلومة..  سأتحقق من صحتها",
+    tips: [
       "البحرين هي أكبر دولة في الخليج العربي",
       "GPT-4 was released in 2021 with 1 trillion parameters",
       "يضم مجلس التعاون الخليجي 8 دول عربية",
@@ -60,11 +65,12 @@ export const AGENTS = [
     mode: "single:muraqib",
   },
   {
-    id:"bani", ar:"بانِ", en:"Knowledge Graph",
-    title:"استخراج المعرفة والكيانات", badge:"KG EXTRACT",
-    icon:"⬡", hex:"#6d28d9", glow:"#6d28d928",
-    hint:"أرسل نصا..  سأستخرج الكيانات والعلاقات",
-    tips:[
+    id: "bani", ar: "بانِ", en: "Knowledge Graph",
+    title: "استخراج المعرفة والكيانات", badge: "KG EXTRACT",
+    icon: "⬡", img: "/agents/bani.png",
+    hex: "#eab308", glow: "#eab30828",
+    hint: "أرسل نصا..  سأستخرج الكيانات والعلاقات",
+    tips: [
       "مصرف البحرين المركزي ينظم القطاع المصرفي ويحمي المستهلكين",
       "أنثروبيك وأوبن إيه آي وغوغل تتنافس في مجال الذكاء الاصطناعي",
       "رؤية 2030 تهدف لتنويع الاقتصاد عبر التقنية والسياحة",
@@ -72,11 +78,12 @@ export const AGENTS = [
     mode: "single:bani",
   },
   {
-    id:"auto", ar:"ذكي", en:"Auto-Route",
-    title:"الوضع الذكي — يختار الوكلاء تلقائياً", badge:"AUTO",
-    icon:"⚡", hex:"#f59e0b", glow:"#f59e0b28",
-    hint:"اسأل أي شيء..  سأختار أفضل الوكلاء تلقائيا",
-    tips:[
+    id: "auto", ar: "ذكي", en: "Auto-Route",
+    title: "الوضع الذكي — يختار الوكلاء تلقائياً", badge: "AUTO",
+    icon: "⚡", img: "/agents/acai-logo.png",
+    hex: "#8b5cf6", glow: "#8b5cf628",
+    hint: "اسأل أي شيء..  سأختار أفضل الوكلاء تلقائيا",
+    tips: [
       "ما أحدث أنظمة CBB للفنتك وهل هي متوافقة مع الذكاء الاصطناعي؟",
       "حلل جملة: الحين وايد تعبان من الشغل — وهل هي صحيحة نظامياً؟",
       "What makes Bahrain's financial regulations unique in the GCC?",

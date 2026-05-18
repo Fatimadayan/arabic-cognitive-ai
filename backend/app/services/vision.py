@@ -1,250 +1,228 @@
 """
-ACAI Vision Service.
+ACAI Vision service — Clean version (NO OCR).
 
-Two capabilities:
-  1. analyze_image()  - Send image to LLaVA via Ollama for description/reasoning
-                        (uses qwen2.5vl or llava model)
-  2. ocr_arabic()     - Extract Arabic text from images via Tesseract OCR
+Strategy:
+  1. moondream describes the image in English
+  2. qwen2.5:3b translates that English to elegant Arabic
 
-Both lazy-load and degrade gracefully if dependencies are missing.
-
-Requires:
-  - Ollama running with a vision-capable model pulled
-    (recommended: `ollama pull qwen2.5vl:7b` or `ollama pull llava:7b`)
-  - For OCR: Tesseract installed + ara.traineddata language pack
-    (download from https://github.com/tesseract-ocr/tessdata/raw/main/ara.traineddata)
-
-Usage:
-    from app.services.vision import vision
-
-    desc, meta = await vision.analyze_image(image_bytes, "ما الذي تراه في هذه الصورة؟")
-    text, meta = await vision.ocr_arabic(image_bytes)
+This is the production-stable path. OCR was removed because:
+  - Tesseract failed on stylized Arabic (logos, calligraphy)
+  - Garbage OCR output was worse than no OCR
+  - moondream alone gives clean visual descriptions that translate well
 """
-import os
 import base64
-import asyncio
-import tempfile
-from io import BytesIO
-from pathlib import Path
-from typing import Optional
+import io
+import logging
+import os
+import time
+import traceback
+from typing import Optional, Dict, Any
 
 import httpx
 
-from app.core.config import BACKEND_DIR, OLLAMA_URL, VISION_MODEL
-from app.core.logger import log
+log = logging.getLogger(__name__)
 
-
-OLLAMA_HOST = OLLAMA_URL
-
-# Configurable: which Ollama vision model to use
-# Common choices: qwen2.5vl:7b, llava:7b, llava:13b, bakllava
-# The value comes from backend/.env via app.core.config
-
-# Tesseract OCR settings
-TESSERACT_CMD = os.getenv("TESSERACT_CMD")  # e.g. "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
-OCR_LANG = os.getenv("OCR_LANG", "ara+eng")  # Arabic + English fallback
-
-VISION_CACHE_DIR = BACKEND_DIR / "data" / "vision_cache"
-VISION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+VISION_MODEL = os.getenv("VISION_MODEL", "moondream")
+TRANSLATE_MODEL = os.getenv("VISION_TRANSLATE_MODEL", "qwen2.5:3b")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+VISION_TIMEOUT = float(os.getenv("VISION_TIMEOUT", "120.0"))
+TRANSLATE_TIMEOUT = float(os.getenv("VISION_TRANSLATE_TIMEOUT", "60.0"))
 
 
 class VisionService:
-    """
-    Vision service with two backends:
-      - Ollama LLaVA for high-level understanding
-      - Tesseract for exact text extraction
-    """
-
     def __init__(self):
-        self._ocr_available = None
-        self._pil_available = None
+        self._pil_ok = None
+        self._check_pil()
 
     def _check_pil(self) -> bool:
-        if self._pil_available is not None:
-            return self._pil_available
+        if self._pil_ok is not None:
+            return self._pil_ok
         try:
             from PIL import Image  # noqa: F401
-            self._pil_available = True
-        except ImportError:
-            log.warning("vision: PIL not installed. Run: uv add pillow")
-            self._pil_available = False
-        return self._pil_available
-
-    def _check_ocr(self) -> bool:
-        if self._ocr_available is not None:
-            return self._ocr_available
-        try:
-            import pytesseract  # noqa: F401
-            if TESSERACT_CMD:
-                pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
-            self._ocr_available = True
-            log.info("vision: pytesseract available")
-        except ImportError:
-            log.warning("vision: pytesseract not installed. Run: uv add pytesseract")
-            self._ocr_available = False
-        return self._ocr_available
-
-    async def analyze_image(
-        self,
-        image_bytes: bytes,
-        prompt: str = "Describe this image in detail. If there is Arabic text, transcribe it.",
-        model: Optional[str] = None,
-    ) -> tuple[str, dict]:
-        """
-        Send image to Ollama vision model. Returns description.
-
-        Args:
-            image_bytes: Raw image bytes (PNG/JPG/etc.)
-            prompt: Question to ask about the image
-            model: Override default VISION_MODEL
-
-        Returns:
-            (description_text, metadata)
-        """
-        if not image_bytes:
-            return "", {"error": "empty_image"}
-
-        model_name = model or VISION_MODEL
-        img_b64 = base64.b64encode(image_bytes).decode("ascii")
-
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(
-                    f"{OLLAMA_HOST}/api/generate",
-                    json={
-                        "model": model_name,
-                        "prompt": prompt,
-                        "images": [img_b64],
-                        "stream": False,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                description = (data.get("response") or "").strip()
-
-                return description, {
-                    "model": model_name,
-                    "prompt": prompt,
-                    "image_size_bytes": len(image_bytes),
-                    "eval_count": data.get("eval_count"),
-                    "total_duration_ms": (data.get("total_duration", 0) // 1_000_000),
-                }
-        except httpx.HTTPStatusError as e:
-            err = f"ollama_http_{e.response.status_code}"
-            hint = ""
-            if e.response.status_code == 404:
-                hint = f"Pull the model first: ollama pull {model_name}"
-            log.error(f"vision.analyze_image: {err} - {e.response.text[:200]}")
-            return "", {"error": err, "hint": hint, "model": model_name}
+            self._pil_ok = True
         except Exception as e:
-            log.error(f"vision.analyze_image: {e}")
-            return "", {"error": str(e), "model": model_name}
+            self._pil_ok = False
+            log.warning(f"vision: PIL not available: {e}")
+        return self._pil_ok
 
-    async def ocr_arabic(
-        self,
-        image_bytes: bytes,
-        lang: Optional[str] = None,
-    ) -> tuple[str, dict]:
-        """
-        Extract Arabic text from image using Tesseract OCR.
+    def is_available(self) -> bool:
+        return self._pil_ok
 
-        Args:
-            image_bytes: Raw image bytes
-            lang: Tesseract lang code, default "ara+eng"
-
-        Returns:
-            (extracted_text, metadata)
-        """
-        if not image_bytes:
-            return "", {"error": "empty_image"}
-
-        # Run blocking OCR in thread
-        return await asyncio.to_thread(self._ocr_sync, image_bytes, lang or OCR_LANG)
-
-    def _ocr_sync(self, image_bytes: bytes, lang: str) -> tuple[str, dict]:
-        if not self._check_pil() or not self._check_ocr():
-            return "", {
-                "error": "ocr_unavailable",
-                "hint": "Install: uv add pytesseract pillow + system Tesseract with ara language pack",
-            }
-
-        import pytesseract
-        from PIL import Image
-
-        try:
-            img = Image.open(BytesIO(image_bytes))
-
-            # Tesseract works better on RGB/grayscale than RGBA
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
-
-            text = pytesseract.image_to_string(img, lang=lang)
-            text = text.strip()
-
-            # Confidence: tesseract.image_to_data gives per-word confidences
-            try:
-                data = pytesseract.image_to_data(
-                    img, lang=lang, output_type=pytesseract.Output.DICT
-                )
-                confs = [int(c) for c in data.get("conf", []) if str(c).lstrip("-").isdigit() and int(c) >= 0]
-                avg_conf = round(sum(confs) / len(confs), 2) if confs else None
-            except Exception:
-                avg_conf = None
-
-            return text, {
-                "lang": lang,
-                "image_size_bytes": len(image_bytes),
-                "image_dimensions": list(img.size),
-                "char_count": len(text),
-                "avg_confidence": avg_conf,
-                "word_count": len(text.split()),
-            }
-        except pytesseract.TesseractNotFoundError:
-            return "", {
-                "error": "tesseract_binary_not_found",
-                "hint": "Install Tesseract: https://github.com/UB-Mannheim/tesseract/wiki and add ara.traineddata",
-            }
-        except Exception as e:
-            log.error(f"vision.ocr_arabic: {e}")
-            err_str = str(e)
-            hint = ""
-            if "ara" in err_str.lower() or "language" in err_str.lower():
-                hint = "Download ara.traineddata to your Tesseract tessdata folder"
-            return "", {"error": err_str, "hint": hint}
-
-    async def hybrid_analyze(
-        self,
-        image_bytes: bytes,
-        prompt: str = "صف هذه الصورة بالتفصيل واستخرج أي نص عربي",
-    ) -> dict:
-        """
-        Run BOTH LLaVA description AND Tesseract OCR in parallel.
-        Best for documents/forms where you want exact text + understanding.
-
-        Returns dict with both results.
-        """
-        description_task = asyncio.create_task(self.analyze_image(image_bytes, prompt))
-        ocr_task = asyncio.create_task(self.ocr_arabic(image_bytes))
-
-        desc, desc_meta = await description_task
-        ocr, ocr_meta = await ocr_task
-
-        return {
-            "description": desc,
-            "description_meta": desc_meta,
-            "ocr_text": ocr,
-            "ocr_meta": ocr_meta,
-        }
-
-    def get_status(self) -> dict:
+    def status(self) -> Dict[str, Any]:
         return {
             "vision_model": VISION_MODEL,
+            "translate_model": TRANSLATE_MODEL,
             "ollama_host": OLLAMA_HOST,
-            "ocr_available": self._check_ocr(),
-            "ocr_lang": OCR_LANG,
-            "pil_available": self._check_pil(),
+            "pil_available": self._pil_ok,
+            "timeout_seconds": VISION_TIMEOUT,
+            "strategy": "moondream(EN) -> qwen2.5:3b(translate to AR)",
+        }
+
+    def _preprocess_image(self, image_bytes: bytes) -> bytes:
+        """Resize huge images and normalize format."""
+        if not self._check_pil():
+            return image_bytes
+        try:
+            from PIL import Image
+            img = Image.open(io.BytesIO(image_bytes))
+
+            if img.mode in ("RGBA", "LA", "P"):
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                if img.mode == "RGBA":
+                    bg.paste(img, mask=img.split()[3])
+                elif img.mode == "LA":
+                    bg.paste(img.convert("RGB"))
+                else:
+                    bg.paste(img.convert("RGB"))
+                img = bg
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+
+            MAX_DIM = 1024
+            if max(img.size) > MAX_DIM:
+                ratio = MAX_DIM / max(img.size)
+                new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                img = img.resize(new_size, Image.LANCZOS)
+                log.info(f"vision: resized image to {new_size}")
+
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=90)
+            return buf.getvalue()
+        except Exception as e:
+            log.warning(f"vision: preprocessing failed: {e}")
+            return image_bytes
+
+    async def _moondream_describe(self, image_b64: str) -> str:
+        """Get a detailed English description from moondream."""
+        prompt = (
+            "Describe this image in detail. "
+            "Include: what is in it, colors, layout, any notable objects, "
+            "logos, symbols, or visible features. Be thorough and specific."
+        )
+        async with httpx.AsyncClient(timeout=VISION_TIMEOUT) as client:
+            resp = await client.post(
+                f"{OLLAMA_HOST}/api/generate",
+                json={
+                    "model": VISION_MODEL,
+                    "prompt": prompt,
+                    "images": [image_b64],
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.3,
+                        "num_predict": 400,
+                        "num_ctx": 2048,
+                    },
+                },
+            )
+            if resp.status_code != 200:
+                raise RuntimeError(f"moondream HTTP {resp.status_code}: {resp.text[:200]}")
+            data = resp.json()
+            desc = (data.get("response") or "").strip()
+            if not desc:
+                raise RuntimeError("moondream returned empty description")
+            return desc
+
+    async def _translate_to_arabic(self, english_text: str) -> str:
+        """Translate moondream's English to elegant Arabic via qwen2.5:3b."""
+        if not english_text:
+            return ""
+
+        prompt = f"""أنت مترجم محترف. ترجم الوصف الإنجليزي التالي للصورة إلى عربية فصحى واضحة ومفصلة.
+اكتب الإجابة كاملة بالعربية فقط. لا تستخدم أي حرف صيني أو إنجليزي.
+
+الوصف الإنجليزي:
+{english_text}
+
+اكتب الوصف بالعربية فقط الآن:"""
+
+        async with httpx.AsyncClient(timeout=TRANSLATE_TIMEOUT) as client:
+            resp = await client.post(
+                f"{OLLAMA_HOST}/api/generate",
+                json={
+                    "model": TRANSLATE_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.3,
+                        "num_predict": 600,
+                    },
+                },
+            )
+            if resp.status_code != 200:
+                return english_text
+            data = resp.json()
+            return (data.get("response") or english_text).strip()
+
+    async def analyze(self, image_bytes: bytes, prompt: str = None) -> Dict[str, Any]:
+        if not image_bytes:
+            return {"error": "empty_image", "detail": "No image bytes received"}
+
+        t0 = time.time()
+
+        # 1. Preprocess
+        try:
+            processed = self._preprocess_image(image_bytes)
+            log.info(f"vision: preprocessed {len(image_bytes)} -> {len(processed)} bytes")
+        except Exception as e:
+            return {
+                "error": "preprocess_failed",
+                "detail": f"{type(e).__name__}: {e}",
+            }
+
+        # 2. Get English description from moondream
+        b64 = base64.b64encode(processed).decode("utf-8")
+        try:
+            english_desc = await self._moondream_describe(b64)
+            t_vision = time.time()
+            log.info(
+                f"vision: moondream produced {len(english_desc)} chars in "
+                f"{(t_vision-t0)*1000:.0f}ms"
+            )
+        except httpx.TimeoutException:
+            return {
+                "error": "vision_timeout",
+                "detail": f"Moondream timed out after {VISION_TIMEOUT}s",
+                "hint": "Try again. First call loads the model into RAM.",
+            }
+        except httpx.ConnectError as e:
+            return {
+                "error": "ollama_not_running",
+                "detail": f"Cannot reach {OLLAMA_HOST}: {e}",
+                "hint": "Start Ollama: ollama serve",
+            }
+        except Exception as e:
+            tb = traceback.format_exc()
+            log.error(f"vision: moondream failed:\n{tb}")
+            return {
+                "error": "moondream_failed",
+                "detail": f"{type(e).__name__}: {e}",
+            }
+
+        # 3. Translate to Arabic via qwen2.5:3b
+        try:
+            arabic_desc = await self._translate_to_arabic(english_desc)
+            t_done = time.time()
+            log.info(
+                f"vision: translation done in {(t_done-t_vision)*1000:.0f}ms"
+            )
+        except Exception as e:
+            log.warning(f"vision: translation failed, using English: {e}")
+            arabic_desc = english_desc
+            t_done = time.time()
+
+        return {
+            "description": arabic_desc,
+            "english_description": english_desc,
+            "model": VISION_MODEL,
+            "translate_model": TRANSLATE_MODEL,
+            "latency_ms": int((t_done - t0) * 1000),
+            "vision_latency_ms": int((t_vision - t0) * 1000),
+            "translate_latency_ms": int((t_done - t_vision) * 1000),
         }
 
 
-# Singleton
 vision = VisionService()
+
+
+def get_vision() -> VisionService:
+    return vision
